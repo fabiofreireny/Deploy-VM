@@ -27,7 +27,9 @@ Installs all available Windows Updates (from Microsoft) and reboot VM. If you ha
 `Add-WindowsVMToDomain [-VMName] <string> [-GuestCredential] <pscredential> [-DomainCredential] <pscredential> [[-DomainName] <string>] [[-OUPath] <string>] [-Wait]`
 
 Renames VM (from self-assigned name), reboots, adds it to Domain, then reboots again. Note that there is a slight security deficiency here as domain credentials are stored in a plain text file for a brief moment, then deleted. There is a chance the delete could fail and the credentials be exposed. To mitigate you should use an account that can only add machines to domain, never domain admin
-#### New-WindowsVM
+
+`New-WindowsVM [-VMName] <String> -Cluster <String> -Datastore <String> -NetworkName <String> -TechnicalOwner <String> -OperatingSystem <String> [-IP] <String> [-DomainCredential] <PSCredential> [-GuestCredential] <PSCredential> [[-NumCPU] <Int32>] [[-MemoryGB] <Int32>] [[-AdditionalDisks] <Int32>] [[-Gateway] <String>] [[-SubnetMaskCIDR] <String>] [[-DNS] <String[]>] [[-DomainName] <String>] [[-OUPath] <String>] [[-TimeZone] <String>]`
+
 This is an aggregator function (if such a term exists). It takes all parameters required by the other functions and calls them, one by one. It essentially is a one-liner to deploy a VM, soup-to-nuts.
 This command also used Dynamic Parameters, thus the warning above also applies
 
