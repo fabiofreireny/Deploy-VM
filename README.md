@@ -1,7 +1,7 @@
 # Deploy-VM
 Module to assist in building VMware VMs
 
-Requires PowerCLI and ActiveDirectory Powershell modules
+Requires PowerCLI and ActiveDirectory Powershell modules. Currently it can build Windows VMs, but I intend to complement it with a set of functions that will achieve the same in linux. Note that the 'Create-VM' function is agnostic
 
 Module is comprised of the following functions. Use get-help for details
 
