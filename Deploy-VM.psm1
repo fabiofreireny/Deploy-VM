@@ -3,8 +3,9 @@ Set-Variable Default_MemoryGB -Option Constant -Value 4
 Set-Variable Default_AdditionalDisks -Option Constant -Value 1
 
 $operatingSystemLookup = @{
-    Server2012r2 = "TEMPLATE-SERVER2KR2-VAUTOMATION"
-    Server2016   = "TEMPLATE-SERVER2016-VAUTOMATION"
+    Server2012r2   = "TEMPLATE-SERVER2KR2-VAUTOMATION"
+    Server2016     = "TEMPLATE-SERVER2016-VAUTOMATION"
+    Server2016Core = "TEMPLATE-SERVER2016Core-VAUTOMATION"
 }
 
 # Make sure you are connected to a vCenter!! Create-VM and NewWindowsVM use Dynamic Parameters.
@@ -115,7 +116,7 @@ function Create-VM {
                 Type = [string]
                 Position = 2
                 Mandatory = $true
-                ValidateSet = (Get-DatastoreCluster).Name | Sort
+                ValidateSet = ((Get-DatastoreCluster).Name + (Get-Datastore).Name) | Sort
             },
             @{
                 Name = "NetworkName"
@@ -175,6 +176,7 @@ function Create-VM {
             resourcePool = $Cluster
             contentLibraryItem = $operatingSystemLookup.$operatingSystem
             datastore = $datastore
+            diskStorageFormat = 'Thin'
         }
 
         New-VM  @params
@@ -224,7 +226,7 @@ function Create-VM {
     }
 }
 
-function Configure-WindowsVMTCPIP {
+function Initialize-WindowsVMTCPIP {
     #requires -module ActiveDirectory
 
     param (
@@ -246,7 +248,7 @@ function Configure-WindowsVMTCPIP {
         [int]$SubnetMaskCIDR = 24,
 
         # Default gateway, If none provided assume it's same as $IP but replacing last octet with .1
-        [ValidatePattern("(\d{1,3}\.){3}\d{1,3}")]
+        [ValidateScript({($_ -match "(\d{1,3}\.){3}\d{1,3}") -or (-not $_)})]
         [string]$Gateway
     )
 
@@ -275,7 +277,7 @@ function Configure-WindowsVMTCPIP {
     $scriptIP  = @"
         Get-NetAdapter | Disable-NetAdapterBinding -ComponentID ms_tcpip6
         Get-NetAdapter | Set-NetIPInterface -DHCP Disabled
-        Get-NetAdapter | New-NetIPAddress -AddressFamily IPv4 -IPAddress $IP -PrefixLength [string]$SubnetMaskCIDR -Type Unicast -DefaultGateway $Gateway
+        Get-NetAdapter | New-NetIPAddress -AddressFamily IPv4 -IPAddress $IP -PrefixLength $SubnetMaskCIDR -Type Unicast -DefaultGateway $Gateway
         Get-NetAdapter | Set-DnsClientServerAddress -ServerAddresses $($DNS -join ",")
 "@
 
@@ -314,23 +316,23 @@ function Initialize-WindowsVMDisks {
 '@
 
     $diskpartSQL = @'
-        REM Configure SQL LOGS drive
+        REM Configure SQL Database drive
         select disk 2
         online disk
         attrib disk clear readonly
         create partition primary
         select partition 1
-        assign letter=l
-        format fs=ntfs quick label="LOGS"
+        assign letter=e
+        format fs=ntfs quick label="Database"
 
-        REM Configure SQL SWAP drive
+        REM Configure SQL Log drive
         select disk 3
         online disk
         attrib disk clear readonly
         create partition primary
         select partition 1
-        assign letter=s
-        format fs=ntfs quick label="SWAP"
+        assign letter=l
+        format fs=ntfs quick label="Logs"
 
         REM Configure SQL TEMP drive
         select disk 4
@@ -345,9 +347,11 @@ function Initialize-WindowsVMDisks {
     $diskpartBatchFile = @'
         diskpart /s C:\Windows\temp\diskpart.txt
 
-        mkdir c:\Scripts
-        mkdir c:\Install
-        mkdir c:\Temp
+        If !(Test-Path c:\Scripts) { mkdir c:\Scripts }
+        If !(Test-Path c:\Install) { mkdir c:\Install }
+        If !(Test-Path c:\Temp   ) { mkdir c:\Temp }
+
+        Get-ChildItem c:\users\rearm.cmd -Recurse | % { Remove-Item $_ -Force }
 '@
 
     # Find out how many disks in VM
@@ -366,12 +370,12 @@ function Initialize-WindowsVMDisks {
     }
 
     # Dealing with DOS idiosyncrasies
-    $diskpartCommands.replace("`n","`r`n") | out-file $env:temp\diskpart.txt -Force -Encoding ASCII
+    $diskpartCommands.split("`r`n").trim() | out-file $env:temp\diskpart.txt -Force -Encoding ASCII
 
     Write-Output "Configuring [$NumDisks] disk(s)..."
 
     # Change drive letters. This is done inside Windows, thus the need for it to be powered on and the guest credentials
-    Copy-VMGuestFile -VM $VMName -Source $env:temp\diskpart.txt -Destination c:\Windows\Temp -Force -LocalToGuest -GuestCredential $guestCredential -ErrorVariable $copyError -ErrorAction SilentlyContinue
+    Copy-VMGuestFile -VM $VMName -Source $env:temp\diskpart.txt -Destination c:\Windows\Temp -Force -LocalToGuest -GuestCredential $guestCredential
 
     Invoke-VMScript -VM $VMName -GuestCredential $guestCredential -ScriptText $diskpartBatchFile
 }
@@ -520,7 +524,7 @@ function New-WindowsVM {
         .DESCRIPTION
         It will call, in sequence:
         Create-VM
-        Configure-WindowsVMTCPIP
+        Initialize-WindowsVMTCPIP
         Initialize-WndowsVMDisks
         Set-WindowsVMTimeZone
         Start-WindowsVMUpdate
@@ -602,6 +606,7 @@ function New-WindowsVM {
         [string]$OUPath = ((Get-ADDomain).ComputersContainer -replace ("CN=Computers","OU=Servers")),
 
         # Time Zone
+        [ValidateSet("Eastern Standard Time","Pacific Standard Time","Central Standard Time","GMT Standard Time","W. Europe Standard Time","China Standard Time")]
         [string]$TimeZone = "Eastern Standard Time"
     )
     DynamicParam {
@@ -624,7 +629,7 @@ function New-WindowsVM {
                 Type = [string]
                 Position = 2
                 Mandatory = $true
-                ValidateSet = (Get-DatastoreCluster).Name | Sort
+                ValidateSet = ((Get-DatastoreCluster).Name + (Get-Datastore).Name) | Sort
             },
             @{
                 Name = "NetworkName"
@@ -688,16 +693,48 @@ function New-WindowsVM {
             -TechnicalOwner $technicalOwner -OperatingSystem $operatingSystem -AdditionalDisks $AdditionalDisks `
             -NumCPU $numCPU -MemoryGB $memoryGB -Wait
 
+        # Make sure I can talk to VM
+        do {
+            try {
+                Set-WindowsVMTimeZone -VMName $VMName -GuestCredential $GuestCredential -TimeZone $TimeZone -ErrorAction Stop
+                $success = $true
+            }
+            catch {
+                Start-Sleep -Seconds 5
+                $success = $false
+            }
+        } until ($success)
+
+
         if ($IP -ne "DHCP") {
-            Configure-WindowsVMTCPIP -VMName $VMName -GuestCredential $guestCredential -IP $IP `
-                -SubnetMaskCIDR $subnetMaskCIDR -Gateway $gateway -DNS $DNS
+            $params = @{
+                VMName = $VMName
+                GuestCredential = $GuestCredential
+                IP = $IP
+            }
+
+            if ($SubnetMaskCIDR) {
+                $params += @{
+                    SubnetMaskCIDR = $subnetMaskCIDR
+                }
+            }
+            if ($Gateway) {
+                $params += @{
+                    Gateway = $Gateway
+                }
+            }
+            if ($Gateway) {
+                $params += @{
+                    DNS = $DNS
+                }
+            }
+
+            Initialize-WindowsVMTCPIP @params
         }
 
         # I hate to hard code pauses but I can't figure out how to get around this. The copy fails otherwise
-        Start-Sleep -Seconds 30
+        #Start-Sleep -Seconds 30
         Initialize-WindowsVMDisks -VMName $VMName -GuestCredential $GuestCredential
-
-        Set-WindowsVMTimeZone     -VMName $VMName -GuestCredential $GuestCredential -TimeZone $TimeZone
 
         Start-WindowsVMUpdate     -VMName $VMName -GuestCredential $GuestCredential
 
