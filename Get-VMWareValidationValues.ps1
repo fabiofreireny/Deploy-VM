@@ -1,4 +1,4 @@
-#requires -module sqlps
+#requires -module SqlServer
 #requires -module VMware.VimAutomation.Core
 
 $gambrinusSQL                        = "NYCGAMBRINUS01"
@@ -12,13 +12,14 @@ $results = @()
 $datastoreExceptions = @(
     "HeartBeat",
     "Boot",
-    "datastore"
+    "datastore",
+    "localdisk"
 )
 
 $NetworkExceptions = @(
     "vmservice",
     "vMotion",
-    "Management",
+    #"Management",
     "Null",
     "Uplink",
     "Heartbeat"
@@ -60,7 +61,7 @@ $vCenters | % {
     $Datacenters | % {
         $Datacenter = $_
 
-        $Networks = Get-VirtualPortGroup -Datacenter $Datacenter | ? Name -NotMatch ($NetworkExceptions -join "|")
+        $Networks = Get-VDSwitch -Location $Datacenter | Get-VDPortGroup | ? Name -NotMatch ($NetworkExceptions -join "|")
 
         $Clusters = Get-Cluster -Location $Datacenter
         $Clusters | % {
@@ -89,7 +90,7 @@ Invoke-Sqlcmd -ServerInstance $GambrinusSQL -Database $GambrinusDB -Query "BULK 
 
 # Populate Tags
 $Tags = Get-Tag | Select Category, Name | Sort Category, Name
-$Tags | % { Write-Output "$($_.Category.Name),$($_.Name)" } | Out-File -FilePath $tempFile -Force
+$Tags | % { Write-Output "$($_.Name),$($_.Category.Name)" } | Out-File -FilePath $tempFile -Force
 
 Invoke-Sqlcmd -ServerInstance $GambrinusSQL -Database $GambrinusDB -Query "DELETE FROM [$GambrinusTagValidationTable]"
 Invoke-Sqlcmd -ServerInstance $GambrinusSQL -Database $GambrinusDB -Query "BULK INSERT [$GambrinusTagValidationTable] FROM '$tempFile' WITH ( FIELDTERMINATOR = ',', ROWTERMINATOR = '\n')"
