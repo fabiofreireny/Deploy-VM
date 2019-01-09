@@ -2,6 +2,8 @@
 Module to assist in building VMware VMs
 Requires PowerCLI and ActiveDirectory Powershell modules
 
+**I need to update this documentation, but if you happen to stmuble upon this be advised I've made massive changes in the code. For one I can now build CentOS and Windows10 VMs. It is also much more resilient and does better logging/auditing. Because I use this in conjunction with Jenkins (for a front-end) there are things I'm storing in SQL tables that will be used by my script and Jenkins, with a separate script used to populate the tables.**
+
 Module is comprised of the following functions. Use get-help for details
 
 `Create-VM -VMName <String> -Cluster <String> -Datastore <String> -NetworkName <String> -TechnicalOwner <String> -OperatingSystem <String> [-NumCPU <Int32>] [-MemoryGB <Int32>] [-AdditionalDisks <Int32>] [-Wait]`
